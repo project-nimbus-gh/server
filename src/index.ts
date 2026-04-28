@@ -1,6 +1,7 @@
 import net from 'net';
 import { Worker, type WorkerOptions } from 'worker_threads';
 import { createLogger } from './lib/logger';
+import { closeTelemetryBuffer, drainTelemetryBuffer, enqueueTelemetryRecord } from './lib/redisBuffer';
 import { appendChunk, parseIncomingBuffer } from './lib/socketFraming';
 import type { TelemetryRecord } from './lib/telemetry';
 import { createWorkerPool } from './lib/workerPool';
@@ -8,11 +9,10 @@ import { createWorkerPool } from './lib/workerPool';
 const log = createLogger('server');
 const WORKER_COUNT = 4;
 const FLUSH_INTERVAL_MS = 15_000;
-
-const memoryBuffer: TelemetryRecord[] = [];
+let flushInProgress = false;
 
 const workerPool = createWorkerPool(WORKER_COUNT, new URL('./worker.ts', import.meta.url), (record) => {
-  pushToMemory(record as TelemetryRecord);
+  void enqueueTelemetryRecord(record as TelemetryRecord);
 });
 
 const dbWorker = new Worker(new URL('./dbWorker.ts', import.meta.url), { type: 'module' } as WorkerOptions);
@@ -22,15 +22,21 @@ dbWorker.on('message', (message: any) => {
 });
 dbWorker.on('error', (error) => log.error({ error }, 'database worker crashed'));
 
-function pushToMemory(record: TelemetryRecord) {
-  memoryBuffer.push(record);
-}
-
 setInterval(() => {
-  if (memoryBuffer.length === 0) return;
-  const toFlush = memoryBuffer.splice(0, memoryBuffer.length);
-  dbWorker.postMessage({ action: 'flush', records: toFlush });
-  log.info({ flushed: toFlush.length }, 'flushed buffered records to database worker');
+  if (flushInProgress) return;
+
+  flushInProgress = true;
+  void (async () => {
+    try {
+      const toFlush = await drainTelemetryBuffer();
+      if (toFlush.length === 0) return;
+
+      dbWorker.postMessage({ action: 'flush', records: toFlush });
+      log.info({ flushed: toFlush.length }, 'flushed buffered records to database worker');
+    } finally {
+      flushInProgress = false;
+    }
+  })();
 }, FLUSH_INTERVAL_MS);
 
 const server = net.createServer((socket) => {
@@ -42,7 +48,7 @@ const server = net.createServer((socket) => {
     buffer = remainder;
 
     for (const frame of frames) {
-      workerPool.post({ type: 'buffer', data: frame.payload as Uint8Array });
+      workerPool.post(frame);
     }
   });
 
@@ -56,6 +62,7 @@ process.once('SIGINT', async () => {
   log.info('shutting down');
   server.close();
   await workerPool.shutdown();
+  await closeTelemetryBuffer();
   await dbWorker.terminate();
   process.exit(0);
 });

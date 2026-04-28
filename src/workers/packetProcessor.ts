@@ -5,16 +5,9 @@ import type { TelemetryRecord } from '../lib/telemetry';
 
 const log = createLogger('packet-worker');
 
-type InMsg = { type: 'buffer'; data: Uint8Array } | { type: 'json'; data: unknown };
-
-export function handlePacketMessage(message: InMsg, emit: (payload: unknown) => void) {
+export function handlePacketMessage(message: Uint8Array, emit: (payload: unknown) => void) {
   try {
-    if (message.type !== 'buffer') {
-      log.debug({ payloadType: message.type }, 'ignoring non-binary message');
-      return;
-    }
-
-    const packet = unpack(message.data);
+    const packet = unpack(message);
     if (packet && packet.valid && packet.type === PacketType.SENSOR) {
       const record: TelemetryRecord = {
         deviceId: packet.serial,

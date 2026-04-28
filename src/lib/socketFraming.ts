@@ -2,10 +2,6 @@ const textDecoder = new TextDecoder();
 
 export type FrameKind = 'json' | 'binary';
 
-export type ParsedFrame =
-  | { kind: 'json'; payload: string }
-  | { kind: 'binary'; payload: Uint8Array<ArrayBufferLike> };
-
 export function appendChunk(buffer: Uint8Array<ArrayBufferLike>, chunk: Uint8Array<ArrayBufferLike>) {
   const next = new Uint8Array(buffer.length + chunk.length);
   next.set(buffer, 0);
@@ -13,19 +9,10 @@ export function appendChunk(buffer: Uint8Array<ArrayBufferLike>, chunk: Uint8Arr
   return next;
 }
 
-export function parseIncomingBuffer(buffer: Uint8Array<ArrayBufferLike>): { frames: ParsedFrame[]; remainder: Uint8Array<ArrayBufferLike> } {
+export function parseIncomingBuffer(buffer: Uint8Array<ArrayBufferLike>): { frames: Uint8Array<ArrayBufferLike>[]; remainder: Uint8Array<ArrayBufferLike> } {
   const text = textDecoder.decode(buffer);
 
-  if (text.trim().startsWith('{')) {
-    const frames = text
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => ({ kind: 'json' as const, payload: line }));
-
-    return { frames, remainder: new Uint8Array(0) };
-  }
-
-  const frames: ParsedFrame[] = [];
+  const frames: Uint8Array<ArrayBufferLike>[] = [];
   let remainder = buffer;
 
   while (remainder.length >= 10) {
@@ -53,7 +40,7 @@ export function parseIncomingBuffer(buffer: Uint8Array<ArrayBufferLike>): { fram
       continue;
     }
 
-    frames.push({ kind: 'binary', payload: frame });
+    frames.push(frame);
     remainder = remainder.slice(10);
   }
 

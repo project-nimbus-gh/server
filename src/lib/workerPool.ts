@@ -1,6 +1,5 @@
 import { Worker } from 'worker_threads';
 import type { WorkerOptions } from 'worker_threads';
-import type { WorkerMessage } from './workerMessages';
 
 export function createWorkerPool(workerCount: number, workerUrl: URL, onRecord: (record: unknown) => void) {
   const workers: Worker[] = [];
@@ -17,7 +16,7 @@ export function createWorkerPool(workerCount: number, workerUrl: URL, onRecord: 
 
   let roundRobinIndex = 0;
 
-  function post(message: WorkerMessage) {
+  function post(message: Uint8Array<ArrayBufferLike>) {
     if (workers.length === 0) return;
     const worker = workers[roundRobinIndex % workers.length]!;
     roundRobinIndex += 1;
