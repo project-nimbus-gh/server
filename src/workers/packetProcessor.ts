@@ -13,7 +13,8 @@ export function handlePacketMessage(message: Uint8Array, emit: (payload: unknown
         deviceId: packet.serial,
         timestamp: new Date(),
         temperature: packet.temperature,
-        humidity: packet.humidity
+        humidity: packet.humidity,
+        airPressure: packet.airPressure
       };
       emit({ action: 'record', record });
     }

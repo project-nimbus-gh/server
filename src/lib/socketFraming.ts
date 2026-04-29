@@ -1,4 +1,4 @@
-const textDecoder = new TextDecoder();
+const FRAME_SIZE = 18;
 
 export type FrameKind = 'json' | 'binary';
 
@@ -10,12 +10,10 @@ export function appendChunk(buffer: Uint8Array<ArrayBufferLike>, chunk: Uint8Arr
 }
 
 export function parseIncomingBuffer(buffer: Uint8Array<ArrayBufferLike>): { frames: Uint8Array<ArrayBufferLike>[]; remainder: Uint8Array<ArrayBufferLike> } {
-  const text = textDecoder.decode(buffer);
-
   const frames: Uint8Array<ArrayBufferLike>[] = [];
   let remainder = buffer;
 
-  while (remainder.length >= 10) {
+  while (remainder.length >= FRAME_SIZE) {
     if (remainder[0] !== 0x02) {
       let startIndex = -1;
       for (let i = 1; i < remainder.length; i++) {
@@ -31,17 +29,17 @@ export function parseIncomingBuffer(buffer: Uint8Array<ArrayBufferLike>): { fram
       }
 
       remainder = remainder.slice(startIndex);
-      if (remainder.length < 10) break;
+      if (remainder.length < FRAME_SIZE) break;
     }
 
-    const frame = remainder.slice(0, 10);
-    if (frame[9] !== 0x03) {
+    const frame = remainder.slice(0, FRAME_SIZE);
+    if (frame[FRAME_SIZE - 1] !== 0x03) {
       remainder = remainder.slice(1);
       continue;
     }
 
     frames.push(frame);
-    remainder = remainder.slice(10);
+    remainder = remainder.slice(FRAME_SIZE);
   }
 
   return { frames, remainder };

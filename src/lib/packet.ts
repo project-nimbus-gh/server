@@ -18,6 +18,11 @@ export type SensorPacket = {
   humidity: number;
 
   /**
+   * Air pressure in hectopascals, from 300 to 1100 hPa
+   */
+  airPressure: number;
+
+  /**
    * Serial number, a numeric identifier for the telemetry sensor, up to 32-bit unsigned integer limit
    */
   serial: number;
@@ -38,9 +43,18 @@ export function validatePacket(packet: SensorPacket): void {
   if (packet.humidity < 0 || packet.humidity > 100) {
     throw new PacketHandlingError("Packet humidity must be between 0 and 100 %");
   }
+  if (!Number.isInteger(packet.airPressure) || packet.airPressure < 300 || packet.airPressure > 1100) {
+    throw new PacketHandlingError("Packet air pressure must be between 300 and 1100 hPa");
+  }
   if (packet.serial < 0 || packet.serial > 0xFFFFFFFF) {
     throw new PacketHandlingError("Packet serial number must be a valid unsigned 32-bit integer");
   }
+}
+
+function countBits(value: bigint): number {
+  let count = 0;
+  for (let current = value; current !== 0n; current &= current - 1n) count++;
+  return count;
 }
 
 /**
@@ -49,28 +63,34 @@ export function validatePacket(packet: SensorPacket): void {
  * @returns A Uint8Array containing the packed packet
  */
 export function pack(packet: SensorPacket): Uint8Array {
+  validatePacket(packet);
+
   const tScaled = Math.round((packet.temperature + 150) * 100);
   const hScaled = Math.round(packet.humidity * 10);
+  const pScaled = packet.airPressure - 300;
 
-  let tel = 0;
-  tel |= (packet.type & 0x0F) << 28;
-  tel |= (tScaled & 0x7FFF) << 13;
-  tel |= (hScaled & 0x03FF) << 3;
+  let raw = 0n;
+  raw |= BigInt(packet.type & 0x0f) << 0n;
+  raw |= BigInt(tScaled & 0x7fff) << 4n;
+  raw |= BigInt(hScaled & 0x03ff) << 19n;
+  raw |= BigInt(pScaled & 0x03ff) << 29n;
+  raw |= BigInt(packet.serial >>> 0) << 95n;
 
-  let count = 0;
-  for (let i = 1; i < 32; i++) if ((tel >> i) & 1) count++;
-  if (count % 2 !== 0) tel |= 0x01;
+  if (countBits(raw) % 2 !== 0) {
+    raw |= 1n << 127n;
+  }
 
-  const buf = new Uint8Array(10);
+  const high = (raw >> 64n) & 0xffffffffffffffffn;
+  const low = raw & 0xffffffffffffffffn;
+
+  const buf = new Uint8Array(18);
   buf[0] = STX;
 
-  // Main data
-  new DataView(buf.buffer).setUint32(1, tel, false); // Big Endian
+  const view = new DataView(buf.buffer);
+  view.setBigUint64(1, high, false);
+  view.setBigUint64(9, low, false);
 
-  // Serial number
-  new DataView(buf.buffer).setUint32(5, packet.serial, false);
-
-  buf[9] = ETX;
+  buf[17] = ETX;
   return buf;
 }
 
@@ -80,24 +100,28 @@ export function pack(packet: SensorPacket): Uint8Array {
  * @returns A SensorPacket object if the array is valid, null otherwise
  */
 export function unpack(raw: Uint8Array): (SensorPacket & { valid: boolean }) | null {
-  if (raw[0] !== STX || raw[raw.length - 1] !== ETX) return null;
+  if (raw.length !== 18 || raw[0] !== STX || raw[raw.length - 1] !== ETX) return null;
 
-  const view = new DataView(raw.buffer);
-  const tel = view.getUint32(1, false);
-  const serial = view.getUint32(5, false);
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  const high = view.getBigUint64(1, false);
+  const low = view.getBigUint64(9, false);
+  const tel = (high << 64n) | low;
 
   // Parity check
-  let count = 0;
-  for (let i = 0; i < 32; i++) if ((tel >> i) & 1) count++;
+  const count = countBits(tel);
 
-  const temperature = Number((((tel >> 13) & 0x7FFF) / 100 - 150).toFixed(2));
-  const humidity = Number((((tel >> 3) & 0x03FF) / 10).toFixed(1));
+  const type = Number(tel & 0x0fn);
+  const temperature = Number((Number((tel >> 4n) & 0x7fffn) / 100 - 150).toFixed(2));
+  const humidity = Number((Number((tel >> 19n) & 0x03ffn) / 10).toFixed(1));
+  const airPressure = Number((tel >> 29n) & 0x03ffn) + 300;
+  const serial = Number((tel >> 95n) & 0xffffffffn);
 
   return {
-    type: (tel >> 28) & 0x0F,
+    type: type as PacketType,
     temperature,
     humidity,
-    serial: serial,
+    airPressure,
+    serial,
     valid: (count % 2 === 0)
   };
 }

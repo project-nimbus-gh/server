@@ -3,4 +3,5 @@ export type TelemetryRecord = {
   timestamp: Date;
   temperature: number;
   humidity: number;
+  airPressure: number;
 };
